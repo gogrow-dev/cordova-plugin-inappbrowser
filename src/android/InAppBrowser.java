@@ -49,12 +49,12 @@ import android.webkit.HttpAuthHandler;
 import android.webkit.JavascriptInterface;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
+import android.webkit.DownloadListener;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.webkit.DownloadListener;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.ImageButton;
@@ -83,6 +83,16 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.HashMap;
 import java.util.StringTokenizer;
+
+import android.Manifest;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.util.Log;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
 @SuppressLint("SetJavaScriptEnabled")
 public class InAppBrowser extends CordovaPlugin {
@@ -151,6 +161,8 @@ public class InAppBrowser extends CordovaPlugin {
     private boolean fullscreen = true;
     private String[] allowedSchemes;
     private InAppBrowserClient currentClient;
+    private String photoFilePath;
+    private Uri photoFileUri;
 
     /**
      * Executes the request and returns PluginResult.
@@ -925,12 +937,45 @@ public class InAppBrowser extends CordovaPlugin {
                     public boolean onShowFileChooser (WebView webView, ValueCallback<Uri[]> filePathCallback, WebChromeClient.FileChooserParams fileChooserParams)
                     {
                         LOG.d(LOG_TAG, "File Chooser 5.0+");
+                        if (Build.VERSION.SDK_INT >= 23) {
+                            boolean grantedWriteExternalStoragePermission = cordova.getActivity().checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+                            boolean grantedCameraPermission = cordova.getActivity().checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+                            if (!grantedWriteExternalStoragePermission || !grantedCameraPermission) {
+                                cordova.getActivity().requestPermissions(new String[] {
+                                        Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.CAMERA 
+                                }, 1);
+                            }
+                        }
+
                         // If callback exists, finish it.
-                        if(mUploadCallback != null) {
+                        if (mUploadCallback != null) {
                             mUploadCallback.onReceiveValue(null);
                         }
                         mUploadCallback = filePathCallback;
 
+                        Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+
+                        if (takePictureIntent.resolveActivity(cordova.getActivity().getPackageManager()) != null) {
+
+                            File photoFile = null;
+                            try {
+                                photoFile = createImageFile();
+                                takePictureIntent.putExtra("PhotoPath", photoFilePath);
+                            } catch (IOException ex) {
+                                Log.e(LOG_TAG, "Image file creation failed", ex);
+                            }
+                            if (photoFile != null) {
+                                photoFilePath = "file:/" + photoFile.getAbsolutePath();
+                                photoFileUri = FileProvider.getUriForFile(
+                                        cordova.getActivity().getApplicationContext(),
+                                        cordova.getActivity().getPackageName() + ".fileprovider",
+                                        photoFile
+                                );
+                                takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoFileUri);
+                            } else {
+                                takePictureIntent = null;
+                            }
+                        }
                         // Create File Chooser Intent
                         Intent content = new Intent(Intent.ACTION_GET_CONTENT);
                         content.addCategory(Intent.CATEGORY_OPENABLE);
@@ -971,7 +1016,7 @@ public class InAppBrowser extends CordovaPlugin {
                             }
                         }
                     }
-                );        
+                ); 
 
                 // Add postMessage interface
                 class JsObject {
@@ -1073,6 +1118,14 @@ public class InAppBrowser extends CordovaPlugin {
         };
         this.cordova.getActivity().runOnUiThread(runnable);
         return "";
+    }
+
+    private File createImageFile() throws IOException{
+        @SuppressLint("SimpleDateFormat") String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        String imageFileName = "img_"+timeStamp+"_";
+        File storageDir = this.cordova.getActivity().getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        File file = new File(storageDir, imageFileName + ".jpg");
+        return file;
     }
 
     /**
